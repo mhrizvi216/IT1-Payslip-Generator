@@ -1,5 +1,6 @@
 import { NextRequest } from "next/server";
-import puppeteer from "puppeteer";
+import puppeteer from "puppeteer-core";
+import chromium from "@sparticuz/chromium";
 import { calculatePayroll } from "../../../../lib/calculations";
 import { savePayslip } from "../../../../lib/db";
 import { PayslipPayload, PayrollConfigInput } from "../../../../lib/types";
@@ -83,27 +84,46 @@ export async function POST(req: NextRequest) {
   const record = savePayslip({ ...payload, calculated: calcResult.calculated });
   const html = renderPayslipHtml(record);
 
-  const browser = await puppeteer.launch({ headless: true });
-  const page = await browser.newPage();
-  await page.setContent(html, { waitUntil: "networkidle0" });
+  try {
+    const browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: chromium.defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: chromium.headless
+    });
+    const page = await browser.newPage();
+    await page.setContent(html, { waitUntil: "networkidle0" });
 
-  const pdfBuffer = await page.pdf({
-    printBackground: true,
-    preferCSSPageSize: true
-  });
+    const pdfBuffer = await page.pdf({
+      printBackground: true,
+      preferCSSPageSize: true
+    });
 
-  await browser.close();
+    await browser.close();
 
-  const safeName = payload.employee.fullName.replace(/[^a-zA-Z0-9]/g, "-");
-  const dateStr = formatPayDate(payload.payroll.payDate, payload.payroll.dateFormatStyle);
-  const filename = `Payslip-${safeName}-${dateStr}.pdf`;
+    const safeName = payload.employee.fullName.replace(/[^a-zA-Z0-9]/g, "-");
+    const dateStr = formatPayDate(payload.payroll.payDate, payload.payroll.dateFormatStyle);
+    const filename = `Payslip-${safeName}-${dateStr}.pdf`;
 
-  return new Response(pdfBuffer as unknown as BodyInit, {
-    status: 200,
-    headers: {
-      "Content-Type": "application/pdf",
-      "Content-Disposition": `attachment; filename="${filename}"`,
-      "X-Payslip-Id": record.id
-    }
-  });
+    return new Response(pdfBuffer as unknown as BodyInit, {
+      status: 200,
+      headers: {
+        "Content-Type": "application/pdf",
+        "Content-Disposition": `attachment; filename="${filename}"`,
+        "X-Payslip-Id": record.id
+      }
+    });
+  } catch (error) {
+    console.error("PDF generation error:", error);
+    return new Response(
+      JSON.stringify({
+        error: "Failed to generate PDF",
+        details: error instanceof Error ? error.message : String(error)
+      }),
+      {
+        status: 500,
+        headers: { "Content-Type": "application/json" }
+      }
+    );
+  }
 }
