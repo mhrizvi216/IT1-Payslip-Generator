@@ -3,7 +3,8 @@ import { join } from "path";
 import { PayslipCalculated, PayslipPayload } from "./types";
 import { v4 as uuidv4 } from "uuid";
 
-const DATA_DIR = join(process.cwd(), "data");
+const isVercel = !!process.env.VERCEL;
+const DATA_DIR = isVercel ? "/tmp/data" : join(process.cwd(), "data");
 const PAYSLIPS_FILE = join(DATA_DIR, "payslips.json");
 
 interface PayslipStore {
@@ -11,26 +12,29 @@ interface PayslipStore {
 }
 
 function ensureStore(): PayslipStore {
-  if (!existsSync(DATA_DIR)) {
-    mkdirSync(DATA_DIR, { recursive: true });
-  }
-  if (!existsSync(PAYSLIPS_FILE)) {
-    const empty: PayslipStore = { payslips: [] };
-    writeFileSync(PAYSLIPS_FILE, JSON.stringify(empty, null, 2), "utf8");
-    return empty;
-  }
-  const raw = readFileSync(PAYSLIPS_FILE, "utf8");
   try {
+    if (!existsSync(DATA_DIR)) {
+      mkdirSync(DATA_DIR, { recursive: true });
+    }
+    if (!existsSync(PAYSLIPS_FILE)) {
+      const empty: PayslipStore = { payslips: [] };
+      writeFileSync(PAYSLIPS_FILE, JSON.stringify(empty, null, 2), "utf8");
+      return empty;
+    }
+    const raw = readFileSync(PAYSLIPS_FILE, "utf8");
     return JSON.parse(raw) as PayslipStore;
-  } catch {
-    const empty: PayslipStore = { payslips: [] };
-    writeFileSync(PAYSLIPS_FILE, JSON.stringify(empty, null, 2), "utf8");
-    return empty;
+  } catch (err) {
+    console.error("Store init failed, falling back to empty in-memory store:", err);
+    return { payslips: [] };
   }
 }
 
 function saveStore(store: PayslipStore) {
-  writeFileSync(PAYSLIPS_FILE, JSON.stringify(store, null, 2), "utf8");
+  try {
+    writeFileSync(PAYSLIPS_FILE, JSON.stringify(store, null, 2), "utf8");
+  } catch (err) {
+    console.error("Failed to save store (expected on read-only systems):", err);
+  }
 }
 
 export function savePayslip(

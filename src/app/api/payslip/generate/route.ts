@@ -85,11 +85,17 @@ export async function POST(req: NextRequest) {
   const html = renderPayslipHtml(record);
 
   try {
-    const browser = await puppeteer.launch({
-      args: chromium.args,
-      executablePath: await chromium.executablePath(),
+    const isLocal = process.env.NODE_ENV === 'development' || !process.env.VERCEL;
+
+    const launchOptions = {
+      args: isLocal ? ['--no-sandbox'] : chromium.args,
+      executablePath: isLocal ? undefined : await chromium.executablePath(),
       headless: true
-    });
+    };
+
+    console.log("Launching browser with options:", JSON.stringify({ ...launchOptions, executablePath: launchOptions.executablePath ? "exists" : "missing" }));
+
+    const browser = await puppeteer.launch(launchOptions);
     const page = await browser.newPage();
     await page.setContent(html, { waitUntil: "networkidle0" });
 
@@ -113,11 +119,12 @@ export async function POST(req: NextRequest) {
       }
     });
   } catch (error) {
-    console.error("PDF generation error:", error);
+    console.error("PDF generation error details:", error);
     return new Response(
       JSON.stringify({
         error: "Failed to generate PDF",
-        details: error instanceof Error ? error.message : String(error)
+        message: error instanceof Error ? error.message : "Unknown error",
+        stack: process.env.NODE_ENV === 'development' ? (error instanceof Error ? error.stack : undefined) : undefined
       }),
       {
         status: 500,
