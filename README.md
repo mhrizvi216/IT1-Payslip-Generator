@@ -31,8 +31,8 @@ A professional Next.js web application for generating customizable payslip PDFs 
 
 ```bash
 # Clone the repository
-git clone https://github.com/mhrizvi216/IT1-Invoice-Generator.git
-cd IT1-Invoice-Generator
+git clone https://github.com/mhrizvi216/IT1-Payslip-Generator.git
+cd IT1-Payslip-Generator
 
 # Install dependencies
 npm install
@@ -274,4 +274,4 @@ Contributions are welcome! Please open an issue or submit a pull request.
 ## Support
 
 For issues or questions, please open a GitHub issue at:
-https://github.com/mhrizvi216/IT1-Invoice-Generator/issues
+https://github.com/mhrizvi216/IT1-Payslip-Generator/issues
