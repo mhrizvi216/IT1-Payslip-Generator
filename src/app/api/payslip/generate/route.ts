@@ -12,117 +12,106 @@ import path from "path";
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
+  let browser = null;
   try {
-    const body = (await req.json()) as { payload: PayslipPayload };
-    const payload = body.payload;
+    const { payload }: { payload: PayslipPayload } = await req.json();
 
     if (!payload) {
-      return new Response(JSON.stringify({ error: "Missing payload" }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" }
-      });
+      return new Response(JSON.stringify({ error: "No payload provided" }), { status: 400 });
     }
 
     const calcResult = calculatePayroll(payload.payroll as PayrollConfigInput);
-
     if (!calcResult.calculated || calcResult.errors.length > 0) {
-      return new Response(JSON.stringify({ errors: calcResult.errors }), {
-        status: 400,
-        headers: { "Content-Type": "application/json" }
-      });
+      return new Response(JSON.stringify({ errors: calcResult.errors }), { status: 400 });
     }
 
-    const publicDir = path.join(process.cwd(), "public");
-
-    // Check for logo and inject default if missing
-    if (!payload.company.logoDataUrl) {
-      try {
-        const logoPath = path.join(publicDir, "it1-logo.png");
-        if (fs.existsSync(logoPath)) {
-          const logoBuffer = fs.readFileSync(logoPath);
-          payload.company.logoDataUrl = `data:image/png;base64,${logoBuffer.toString("base64")}`;
-        }
-      } catch (err) {
-        console.error("Logo injection failed:", err);
-      }
+    // Attempt to save (non-blocking)
+    let record;
+    try {
+      record = savePayslip({ ...payload, calculated: calcResult.calculated });
+    } catch (dbError) {
+      console.error("DB Save failed, continuing in memory:", dbError);
+      record = { ...payload, id: "temp-" + Date.now(), calculated: calcResult.calculated, createdAt: new Date().toISOString() };
     }
 
-    // Check for stamp and inject default if missing
-    if (!payload.company.stampDataUrl) {
-      try {
-        const stampPath = path.join(publicDir, "IT1_Stamp.png");
-        if (fs.existsSync(stampPath)) {
-          const stampBuffer = fs.readFileSync(stampPath);
-          payload.company.stampDataUrl = `data:image/png;base64,${stampBuffer.toString("base64")}`;
-        }
-      } catch (err) {
-        console.error("Stamp injection failed:", err);
-      }
-    }
-
-    // Check for watermark and inject default if missing
-    if (!payload.company.watermarkDataUrl) {
-      try {
-        const watermarkPath = path.join(publicDir, "it1-logo.png");
-        if (fs.existsSync(watermarkPath)) {
-          const watermarkBuffer = fs.readFileSync(watermarkPath);
-          payload.company.watermarkDataUrl = `data:image/png;base64,${watermarkBuffer.toString("base64")}`;
-        }
-      } catch (err) {
-        console.error("Watermark injection failed:", err);
-      }
-    }
-
-    const record = savePayslip({ ...payload, calculated: calcResult.calculated });
-    const html = renderPayslipHtml(record);
-
+    const html = renderPayslipHtml(record as any);
     const isLocal = process.env.NODE_ENV === 'development' || !process.env.VERCEL;
+
+    console.log(`Starting PDF Generation (Environment: ${isLocal ? 'Local' : 'Vercel'})`);
 
     const launchOptions = {
       args: isLocal ? ['--no-sandbox'] : [...chromium.args, '--disable-gpu', '--disable-dev-shm-usage', '--hide-scrollbars'],
       executablePath: isLocal ? undefined : await chromium.executablePath('https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar'),
-      headless: true
+      headless: true,
+      ignoreHTTPSErrors: true
     };
 
-    const browser = await puppeteer.launch(launchOptions);
     try {
-      const page = await browser.newPage();
+      browser = await puppeteer.launch(launchOptions);
+    } catch (launchError: any) {
+      console.error("Puppeteer Launch Failure:", launchError);
+      return new Response(JSON.stringify({
+        error: "Browser failed to launch",
+        details: launchError.message,
+        stage: "launch"
+      }), { status: 500 });
+    }
+
+    const page = await browser.newPage();
+
+    try {
       await page.setContent(html, {
         waitUntil: "load",
-        timeout: 30000
+        timeout: 25000
       });
+    } catch (contentError: any) {
+      console.error("Set Content Failure:", contentError);
+      await browser.close();
+      return new Response(JSON.stringify({
+        error: "Failed to render HTML content",
+        details: contentError.message,
+        stage: "navigation"
+      }), { status: 500 });
+    }
 
+    try {
       const pdfBuffer = await page.pdf({
+        format: 'A4',
         printBackground: true,
-        preferCSSPageSize: true
+        preferCSSPageSize: true,
+        margin: { top: '0px', right: '0px', bottom: '0px', left: '0px' }
       });
 
       const safeName = payload.employee.fullName.replace(/[^a-zA-Z0-9]/g, "-");
       const dateStr = formatPayDate(payload.payroll.payDate, payload.payroll.dateFormatStyle);
       const filename = `Payslip-${safeName}-${dateStr}.pdf`;
 
-      return new Response(pdfBuffer as unknown as BodyInit, {
+      return new Response(pdfBuffer as any, {
         status: 200,
         headers: {
           "Content-Type": "application/pdf",
           "Content-Disposition": `attachment; filename="${filename}"`,
-          "X-Payslip-Id": record.id
+          "X-Payslip-Id": record.id || "unknown"
         }
       });
-    } finally {
+    } catch (pdfError: any) {
+      console.error("PDF Print Failure:", pdfError);
+      return new Response(JSON.stringify({
+        error: "Failed to generate PDF buffer",
+        details: pdfError.message,
+        stage: "printing"
+      }), { status: 500 });
+    }
+
+  } catch (error: any) {
+    console.error("Global API Error:", error);
+    return new Response(JSON.stringify({
+      error: "An unexpected server error occurred",
+      details: error.message
+    }), { status: 500 });
+  } finally {
+    if (browser) {
       await browser.close();
     }
-  } catch (error) {
-    console.error("Critical PDF generation error:", error);
-    return new Response(
-      JSON.stringify({
-        error: "Server encountered an error while generating PDF",
-        message: error instanceof Error ? error.message : String(error)
-      }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" }
-      }
-    );
   }
 }

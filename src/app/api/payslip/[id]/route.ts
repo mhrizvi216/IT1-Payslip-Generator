@@ -13,53 +13,69 @@ interface Params {
 }
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const { id } = await params;
-  const record = getPayslip(id);
-
-  if (!record) {
-    return new Response("Not found", { status: 404 });
-  }
-
-  const html = renderPayslipHtml(record);
-
+  let browser = null;
   try {
+    const { id } = await params;
+    const record = getPayslip(id);
+
+    if (!record) {
+      return new Response(JSON.stringify({ error: "Payslip not found" }), { status: 404 });
+    }
+
+    const html = renderPayslipHtml(record);
     const isLocal = process.env.NODE_ENV === 'development' || !process.env.VERCEL;
+
+    console.log(`Starting PDF Generation for ID: ${id} (Environment: ${isLocal ? 'Local' : 'Vercel'})`);
 
     const launchOptions = {
       args: isLocal ? ['--no-sandbox'] : [...chromium.args, '--disable-gpu', '--disable-dev-shm-usage', '--hide-scrollbars'],
       executablePath: isLocal ? undefined : await chromium.executablePath('https://github.com/Sparticuz/chromium/releases/download/v131.0.1/chromium-v131.0.1-pack.tar'),
-      headless: true
+      headless: true,
+      ignoreHTTPSErrors: true
     };
 
-    const browser = await puppeteer.launch(launchOptions);
+    try {
+      browser = await puppeteer.launch(launchOptions);
+    } catch (launchError: any) {
+      console.error("Puppeteer Launch Failure:", launchError);
+      return new Response(JSON.stringify({ error: "Browser failed to launch", details: launchError.message }), { status: 500 });
+    }
+
     const page = await browser.newPage();
-    await page.setContent(html, { waitUntil: "networkidle0" });
 
-    const pdfBuffer = await page.pdf({
-      printBackground: true,
-      preferCSSPageSize: true
-    });
+    try {
+      await page.setContent(html, { waitUntil: "load", timeout: 25000 });
+    } catch (contentError: any) {
+      console.error("Set Content Failure:", contentError);
+      await browser.close();
+      return new Response(JSON.stringify({ error: "Failed to render HTML content", details: contentError.message }), { status: 500 });
+    }
 
-    await browser.close();
+    try {
+      const pdfBuffer = await page.pdf({
+        format: 'A4',
+        printBackground: true,
+        preferCSSPageSize: true
+      });
 
-    return new Response(pdfBuffer as unknown as BodyInit, {
-      status: 200,
-      headers: {
-        "Content-Type": "application/pdf",
-        "Content-Disposition": `attachment; filename="payslip-${record.id}.pdf"`
-      }
-    });
-  } catch (error) {
-    console.error("PDF generation error details:", error);
-    return new Response(
-      JSON.stringify({
-        error: "Failed to generate PDF",
-        message: error instanceof Error ? error.message : "Unknown error"
-      }),
-      {
-        status: 500,
-        headers: { "Content-Type": "application/json" }
-      }
-    );
+      return new Response(pdfBuffer as any, {
+        status: 200,
+        headers: {
+          "Content-Type": "application/pdf",
+          "Content-Disposition": `attachment; filename="Payslip-${id}.pdf"`
+        }
+      });
+    } catch (pdfError: any) {
+      console.error("PDF Print Failure:", pdfError);
+      return new Response(JSON.stringify({ error: "Failed to generate PDF buffer", details: pdfError.message }), { status: 500 });
+    }
+
+  } catch (error: any) {
+    console.error("Global API Error:", error);
+    return new Response(JSON.stringify({ error: "Internal server error", details: error.message }), { status: 500 });
+  } finally {
+    if (browser) {
+      await browser.close();
+    }
   }
 }
