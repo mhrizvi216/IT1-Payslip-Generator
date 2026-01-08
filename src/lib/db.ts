@@ -12,20 +12,20 @@ interface PayslipStore {
 }
 
 function ensureStore(): PayslipStore {
+  const empty: PayslipStore = { payslips: [] };
   try {
     if (!existsSync(DATA_DIR)) {
       mkdirSync(DATA_DIR, { recursive: true });
     }
     if (!existsSync(PAYSLIPS_FILE)) {
-      const empty: PayslipStore = { payslips: [] };
       writeFileSync(PAYSLIPS_FILE, JSON.stringify(empty, null, 2), "utf8");
       return empty;
     }
     const raw = readFileSync(PAYSLIPS_FILE, "utf8");
     return JSON.parse(raw) as PayslipStore;
   } catch (err) {
-    console.error("Store init failed, falling back to empty in-memory store:", err);
-    return { payslips: [] };
+    console.error("Store operation failed:", err);
+    return empty;
   }
 }
 
