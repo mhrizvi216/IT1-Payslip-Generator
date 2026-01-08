@@ -3,14 +3,9 @@ import puppeteer from "puppeteer-core";
 import chromium from "@sparticuz/chromium-min";
 import { getPayslip } from "../../../../lib/db";
 import { renderPayslipHtml } from "../../../../server/renderPayslipHtml";
-import fs from "fs";
-import path from "path";
+import { DEFAULT_LOGO_B64, DEFAULT_STAMP_B64 } from "../../../../lib/assets";
 
 export const runtime = "nodejs";
-
-interface Params {
-  params: { id: string };
-}
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
   let browser = null;
@@ -20,6 +15,17 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
 
     if (!record) {
       return new Response(JSON.stringify({ error: "Payslip not found" }), { status: 404 });
+    }
+
+    // Ensure assets are present for older records or failed saves
+    if (!record.company.logoDataUrl) {
+      record.company.logoDataUrl = `data:image/png;base64,${DEFAULT_LOGO_B64}`;
+    }
+    if (!record.company.stampDataUrl) {
+      record.company.stampDataUrl = `data:image/png;base64,${DEFAULT_STAMP_B64}`;
+    }
+    if (!record.company.watermarkDataUrl) {
+      record.company.watermarkDataUrl = `data:image/png;base64,${DEFAULT_LOGO_B64}`;
     }
 
     const html = renderPayslipHtml(record);
@@ -75,7 +81,11 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     return new Response(JSON.stringify({ error: "Internal server error", details: error.message }), { status: 500 });
   } finally {
     if (browser) {
-      await browser.close();
+      try {
+        await browser.close();
+      } catch (closeError) {
+        console.error("Browser close error:", closeError);
+      }
     }
   }
 }

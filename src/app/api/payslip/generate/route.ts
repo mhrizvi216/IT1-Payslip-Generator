@@ -6,8 +6,7 @@ import { savePayslip } from "../../../../lib/db";
 import { PayslipPayload, PayrollConfigInput } from "../../../../lib/types";
 import { formatPayDate } from "../../../../lib/formatting";
 import { renderPayslipHtml } from "../../../../server/renderPayslipHtml";
-import fs from "fs";
-import path from "path";
+import { DEFAULT_LOGO_B64, DEFAULT_STAMP_B64 } from "../../../../lib/assets";
 
 export const runtime = "nodejs";
 
@@ -31,7 +30,23 @@ export async function POST(req: NextRequest) {
       record = savePayslip({ ...payload, calculated: calcResult.calculated });
     } catch (dbError) {
       console.error("DB Save failed, continuing in memory:", dbError);
-      record = { ...payload, id: "temp-" + Date.now(), calculated: calcResult.calculated, createdAt: new Date().toISOString() };
+      record = {
+        ...payload,
+        id: "temp-" + Date.now(),
+        calculated: calcResult.calculated,
+        createdAt: new Date().toISOString()
+      };
+    }
+
+    // Inject fallbacks for branding if missing
+    if (!payload.company.logoDataUrl) {
+      payload.company.logoDataUrl = `data:image/png;base64,${DEFAULT_LOGO_B64}`;
+    }
+    if (!payload.company.stampDataUrl) {
+      payload.company.stampDataUrl = `data:image/png;base64,${DEFAULT_STAMP_B64}`;
+    }
+    if (!payload.company.watermarkDataUrl) {
+      payload.company.watermarkDataUrl = `data:image/png;base64,${DEFAULT_LOGO_B64}`;
     }
 
     const html = renderPayslipHtml(record as any);
@@ -111,7 +126,11 @@ export async function POST(req: NextRequest) {
     }), { status: 500 });
   } finally {
     if (browser) {
-      await browser.close();
+      try {
+        await browser.close();
+      } catch (closeError) {
+        console.error("Browser close error:", closeError);
+      }
     }
   }
 }
