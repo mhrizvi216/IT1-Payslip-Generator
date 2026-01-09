@@ -38,6 +38,7 @@ const initialState: FormState = samplePreset ?? {
 export default function PayslipApp() {
   const [form, setForm] = useState<FormState>(initialState);
   const [errors, setErrors] = useState<CalculationResult["errors"]>([]);
+  const [downloadProgress, setDownloadProgress] = useState<number | null>(null);
 
   const calculation = useMemo(() => {
     const result = calculatePayroll(form.payroll as PayrollConfigInput);
@@ -129,27 +130,53 @@ export default function PayslipApp() {
 
   const handleDownload = async () => {
     if (!canGenerate) return;
-    const res = await fetch("/api/payslip/generate", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ payload: form })
-    });
-    if (!res.ok) {
-      alert("Failed to generate PDF");
-      return;
+
+    setDownloadProgress(0);
+    const intervalId = setInterval(() => {
+      setDownloadProgress((prev) => {
+        if (prev === null || prev >= 90) return prev;
+        return prev + 10;
+      });
+    }, 500);
+
+    try {
+      const res = await fetch("/api/payslip/generate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ payload: form })
+      });
+
+      clearInterval(intervalId);
+
+      if (!res.ok) {
+        setDownloadProgress(null);
+        alert("Failed to generate PDF");
+        return;
+      }
+
+      setDownloadProgress(100);
+
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+
+      // Generate filename locally to ensure it matches the expected format
+      const safeName = form.employee.fullName.replace(/[^a-zA-Z0-9]/g, "-");
+      const dateStr = formatPayDate(form.payroll.payDate, form.payroll.dateFormatStyle);
+      a.download = `Payslip-${safeName}-${dateStr}.pdf`;
+
+      a.click();
+      URL.revokeObjectURL(url);
+
+      // Reset after a moment so user sees 100%
+      setTimeout(() => setDownloadProgress(null), 1000);
+    } catch (e) {
+      clearInterval(intervalId);
+      setDownloadProgress(null);
+      console.error(e);
+      alert("An error occurred while generating the PDF");
     }
-    const blob = await res.blob();
-    const url = URL.createObjectURL(blob);
-    const a = document.createElement("a");
-    a.href = url;
-
-    // Generate filename locally to ensure it matches the expected format
-    const safeName = form.employee.fullName.replace(/[^a-zA-Z0-9]/g, "-");
-    const dateStr = formatPayDate(form.payroll.payDate, form.payroll.dateFormatStyle);
-    a.download = `Payslip-${safeName}-${dateStr}.pdf`;
-
-    a.click();
-    URL.revokeObjectURL(url);
   };
 
   return (
@@ -552,15 +579,37 @@ export default function PayslipApp() {
               </div>
             )}
 
-            <button
-              type="button"
-              onClick={handleDownload}
-              disabled={!canGenerate}
-              className="primary-btn"
-              style={{ marginTop: 16 }}
-            >
-              Download PDF Payslip
-            </button>
+            {downloadProgress === null ? (
+              <button
+                type="button"
+                onClick={handleDownload}
+                disabled={!canGenerate}
+                className="primary-btn"
+                style={{ marginTop: 16 }}
+              >
+                Download PDF Payslip
+              </button>
+            ) : (
+              <div style={{ marginTop: 16, width: "100%" }}>
+                <div style={{
+                  height: "8px",
+                  width: "100%",
+                  backgroundColor: "#e5e7eb",
+                  borderRadius: "4px",
+                  overflow: "hidden"
+                }}>
+                  <div style={{
+                    height: "100%",
+                    width: `${downloadProgress}%`,
+                    backgroundColor: form.company.themeColor || "#0088c8",
+                    transition: "width 0.3s ease-in-out"
+                  }} />
+                </div>
+                <div style={{ textAlign: "center", fontSize: "12px", marginTop: "4px", color: "#6b7280" }}>
+                  Generating PDF... {downloadProgress}%
+                </div>
+              </div>
+            )}
           </div>
         </section>
 
