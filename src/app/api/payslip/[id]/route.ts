@@ -1,6 +1,6 @@
 import { NextRequest } from "next/server";
 import puppeteer from "puppeteer-core";
-import chromium from "@sparticuz/chromium-min";
+import chromium from "@sparticuz/chromium";
 import { getPayslip } from "../../../../lib/db";
 import { renderPayslipHtml } from "../../../../server/renderPayslipHtml";
 import { DEFAULT_LOGO_B64, DEFAULT_STAMP_B64 } from "../../../../lib/assets";
@@ -29,20 +29,16 @@ export async function GET(_req: NextRequest, { params }: { params: Promise<{ id:
     }
 
     const html = renderPayslipHtml(record);
-    const isLocal = process.env.NODE_ENV === 'development' || !process.env.VERCEL;
 
-    const executablePath = isLocal ? undefined : await chromium.executablePath();
-
-    const launchOptions = {
-      args: isLocal ? ['--no-sandbox', '--disable-setuid-sandbox'] : chromium.args,
-      defaultViewport: chromium.defaultViewport,
-      executablePath,
-      headless: chromium.headless,
+    browser = await puppeteer.launch({
+      args: chromium.args,
+      defaultViewport: (chromium as any).defaultViewport,
+      executablePath: await chromium.executablePath(),
+      headless: (chromium as any).headless,
       ignoreHTTPSErrors: true
-    };
+    } as any);
 
     try {
-      browser = await puppeteer.launch(launchOptions);
       const page = await browser.newPage();
 
       await page.setContent(html, {
